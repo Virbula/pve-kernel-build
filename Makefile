@@ -1,13 +1,25 @@
-# Makefile for building Proxmox VE kernel packages in a Docker build environment
+# Makefile for building Proxmox VE kernel packages in a Docker build environment (Docker Desktop safe)
+# Key idea: build on a Docker volume (Linux FS), export artifacts to a bind-mounted ./build directory.
 
 SHELL := /bin/bash
 
 # Variables
-IMAGE_NAME := pve-kernel-builder
-PWD        := $(shell pwd)
-SRC        := $(PWD)/pve-kernel
+IMAGE_NAME   := pve-kernel-builder
+CONTAINER_NAME := pve-kernel-builder
+PWD          := $(shell pwd)
+OUTDIR       := $(PWD)/build
+VOLUME_NAME  := pve-kernel-src
 
-.PHONY: help clone build-container build run-container run prep-source prep kernel rebuild-kernel clean clean-all all-clean
+# Where the repo lives inside the container
+SRC_MNT      := /src
+
+.PHONY: help build-container build \
+        volume-create volume-rm volume-shell volume-init \
+        run-container run \
+        prep-source prep \
+        kernel rebuild-kernel \
+        export-debs all \
+        clean clean-all all-clean
 
 help: ## Show this help message
 	@echo "Usage: make [target]"
@@ -18,75 +30,114 @@ help: ## Show this help message
 			printf "  %-20s %s\n", $$1, $$2 \
 		}' $(MAKEFILE_LIST)
 
-clone: ## Clone the pve-kernel source code from the Proxmox git repo
-	git clone git://git.proxmox.com/git/pve-kernel.git
-	cd pve-kernel && git submodule update --init --recursive
-
-
-build-container: ## Create the Docker container image (linux/amd64) with all the build tools which can be used to compile the PVE kernel
-	cd pve-kernel; \
-	docker buildx build --platform linux/amd64 -f ../Dockerfile -t $(IMAGE_NAME) .
+build-container: ## Build the Docker image (linux/amd64) with all build tools
+	docker buildx build --platform linux/amd64 -f Dockerfile -t $(IMAGE_NAME) .
 
 build: build-container ## -- Alias for build-container
 
-run-container: ## Run the build container with an interactive bash shell (debugging)
-	docker run --platform linux/amd64 --rm -t \
-		-v "$(PWD)/pve-kernel:/src" \
+volume-create: ## Create the docker volume used for source + build (safe on Docker Desktop)
+	@docker volume inspect $(VOLUME_NAME) >/dev/null 2>&1 || docker volume create $(VOLUME_NAME) >/dev/null
+
+volume-rm: ## Remove the docker volume (DESTROYS source/build state)
+	docker volume rm -f $(VOLUME_NAME) >/dev/null 2>&1 || true
+
+volume-shell: build-container volume-create ## Open a bash shell with the volume mounted at /src
+	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -it \
+		-v "$(VOLUME_NAME):$(SRC_MNT)" \
 		$(IMAGE_NAME) /bin/bash
 
+run-container: volume-shell ## -- Kept for compatibility (debugging)
 run: run-container ## -- Alias for run-container
 
+volume-init: build-container volume-create ## Clone or update pve-kernel inside the volume (no mac bind mount)
+	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -t \
+		-v "$(VOLUME_NAME):$(SRC_MNT)" \
+		$(IMAGE_NAME) /bin/bash -lc '\
+			set -euo pipefail; \
+			if [ ! -d "$(SRC_MNT)/.git" ]; then \
+				echo "[INFO] Cloning pve-kernel into volume $(VOLUME_NAME)"; \
+				git clone git://git.proxmox.com/git/pve-kernel.git $(SRC_MNT); \
+			else \
+				echo "[INFO] Updating existing pve-kernel repo in volume $(VOLUME_NAME)"; \
+				cd $(SRC_MNT); \
+				git fetch --all --tags; \
+			fi; \
+			git config --global init.defaultBranch main; \
+			cd $(SRC_MNT) &&  git -c init.defaultBranch=main submodule update --init --recursive; \
+		'
 
-prep-source:  ## Create build dir and install build-deps from generated debian/control
+prep-source: build-container volume-init ## Create build dir + install build-deps from generated debian/control (in volume)
 	@echo
-	@echo "Running make build-dir-fresh to create build directory and packaging control files"
+	@echo "Running make clean && make build-dir-fresh inside the Docker volume..."
 	@echo
-	docker run --platform linux/amd64 --rm \
-		-v "$(PWD)/pve-kernel:/src" \
-		$(IMAGE_NAME) /bin/bash -c "make clean && make build-dir-fresh"
-
-	@set -e; \
-	BUILDDIR=""; \
-	cd pve-kernel; \
-	for d in proxmox-kernel-*; do \
-		[ -d "$$d" ] || continue; \
-		case "$$d" in \
-			proxmox-kernel-[0-9]*.[0-9]*.[0-9]*) \
-				BUILDDIR="$$d"; \
-				echo "BUILDDIR=$$BUILDDIR"; \
-				break ;; \
-		esac; \
-	done; \
-	if [ ! -d "$$BUILDDIR" ]; then \
-		echo "No build dir found, exiting!"; \
-		exit 1; \
-	fi; \
-	docker run --platform linux/amd64 --rm -it \
-		-v "$(SRC):/src" \
-		$(IMAGE_NAME) /bin/bash -lc \
-		"mk-build-deps -ir $$BUILDDIR/debian/control"
+	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -t \
+		-v "$(VOLUME_NAME):$(SRC_MNT)" \
+		$(IMAGE_NAME) /bin/bash -lc '\
+			set -euo pipefail; \
+			cd $(SRC_MNT); \
+			make clean; \
+			make build-dir-fresh; \
+			BUILDDIR="$$(ls -d proxmox-kernel-* 2>/dev/null | head -n 1)"; \
+			if [ -z "$$BUILDDIR" ] || [ ! -d "$$BUILDDIR" ]; then \
+				echo "No build dir found (proxmox-kernel-*), exiting!"; \
+				exit 1; \
+			fi; \
+			echo "[INFO] Using BUILDDIR=$$BUILDDIR"; \
+			mk-build-deps -ir "$$BUILDDIR/debian/control"; \
+		'
 
 prep: prep-source ## -- Alias for prep-source
 
-kernel: ## Build kernel .deb packages inside the container (make deb)
-	docker run --platform linux/amd64 --rm -it \
-		-v "$(SRC):/src" \
-		$(IMAGE_NAME) /bin/bash -lc \
-		"make deb"
+kernel: build-container volume-init ## Build kernel .deb packages inside the container (make deb) using the volume
+	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -t \
+		-v "$(VOLUME_NAME):$(SRC_MNT)" \
+		$(IMAGE_NAME) /bin/bash -lc '\
+			set -euo pipefail; \
+			cd $(SRC_MNT); \
+			make deb; \
+		'
 
-rebuild-kernel: ## Clean and rebuild kernel .deb packages inside the container
-	docker run --platform linux/amd64 --rm -it \
-		-v "$(PWD)/pve-kernel:/src" \
-		$(IMAGE_NAME) /bin/bash -c "make clean && make deb"
+rebuild-kernel: build-container volume-init ## Clean and rebuild kernel .deb packages inside the container
+	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -t \
+		-v "$(VOLUME_NAME):$(SRC_MNT)" \
+		$(IMAGE_NAME) /bin/bash -lc '\
+			set -euo pipefail; \
+			cd $(SRC_MNT); \
+			make clean; \
+			make deb; \
+		'
 
-clean: ## Run make clean in pve-kernel and remove Docker image (keeps source tree)
-	cd pve-kernel; \
-	docker rmi $(IMAGE_NAME) >/dev/null 2>&1 || true; \
-	make clean
+export-debs: build-container volume-create ## Copy built .deb packages from the volume to ./build (bind mounted)
+	@mkdir -p "$(OUTDIR)"
+	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -t \
+		-v "$(VOLUME_NAME):$(SRC_MNT):ro" \
+		-v "$(OUTDIR):/out" \
+		$(IMAGE_NAME) /bin/bash -lc '\
+			set -euo pipefail; \
+			shopt -s nullglob; \
+			cd $(SRC_MNT); \
+			DEBS=( *.deb ); \
+			if [ "$${#DEBS[@]}" -eq 0 ]; then \
+				echo "[WARN] No .deb files found at repository root. Searching under proxmox-kernel-* ..."; \
+				DEBS=( proxmox-kernel-*/**/*.deb ); \
+			fi; \
+			if [ "$${#DEBS[@]}" -eq 0 ]; then \
+				echo "[ERROR] No .deb files found to export."; \
+				exit 1; \
+			fi; \
+			echo "[INFO] Exporting $${#DEBS[@]} .deb package(s) to /out"; \
+			cp -v "$${DEBS[@]}" /out/; \
+		'
 
-clean-all: ## Remove Docker image and delete the local pve-kernel source tree
-	cd pve-kernel; \
+all: prep-source kernel export-debs ## Full pipeline: init/prep -> build -> export artifacts
+
+clean: ## Remove docker image (keeps the volume)
+	docker stop $(CONTAINER_NAME) || true
 	docker rmi $(IMAGE_NAME) >/dev/null 2>&1 || true
-	rm -rf pve-kernel
 
-all-clean: clean-all
+clean-all: ## Remove docker image and remove the volume (DESTROYS source/build state)
+	docker stop $(CONTAINER_NAME) || true
+	docker rmi $(IMAGE_NAME) >/dev/null 2>&1 || true
+	docker volume rm -f $(VOLUME_NAME) >/dev/null 2>&1 || true
+
+all-clean: clean-all ## Alias

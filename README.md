@@ -1,6 +1,10 @@
 # Virbula pve-kernel-build
 Automated PVE Kernel Build With Docker Containers, used by the Virbula team for building and customizing the PVE Kernel for experimentation.
 
+Important Note: You need to make sure you docker instance provides enough disk space for the container.  On Docker Desktop, this is a resource limit setting you can set in the Settings configuration section. 
+
+# License
+
 AGPL v3.0 license, open source as Proxmox PVE license. 
 
 
@@ -14,16 +18,12 @@ or
 
 * make container
 
-## 2. Clone (Check out from Proxmox pve-kernel git repo)  the pve-kernel source code, and check out the submodules
-
-* make clone
-
-
-## 3. Prepare the build directory and install build-dependencies in the build directory 
+## 2. Prepare the build directory and install build-dependencies in the build directory 
 
 * make prep
 
-It essentially does two things:
+It essentially does the following things:
+* clones the git repos into a docker volume
 * make build-dir-refresh
 * mk-build-deps -ir BUILD-DIR/debian/control
 
@@ -33,14 +33,14 @@ The make file automates that to use the first directory found, which is correct 
 
 
 
-## 4. Build the actual .deb kernel packages, including the kernel and the header packages.
+## 3. Build the actual .deb kernel packages, including the kernel and the header packages.
 
 * make kernel 
 
 It runs make deb in the pve-kernel directory after the preps are done. 
 
 
-## 5. Make clean all and rebuild
+## 4. Make clean all and rebuild
 
 You can clean up the tree, and rebuild the kernel as needed.  
 
