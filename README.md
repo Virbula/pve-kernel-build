@@ -1,5 +1,5 @@
 # pve-kernel-build
-Automated PVE Kernel Build With Docker Containers
+Automated PVE Kernel Build With Docker Containers, used by the Virbula team for building and customizing the PVE Kernel for experimentation.
 
 
 # Steps
