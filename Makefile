@@ -75,7 +75,7 @@ kernel: ## Build kernel .deb packages inside the container (make deb)
 		"make deb"
 
 rebuild-kernel: ## Clean and rebuild kernel .deb packages inside the container
-	docker run --platform linux/amd64 --rm \
+	docker run --platform linux/amd64 --rm -it \
 		-v "$(PWD)/pve-kernel:/src" \
 		$(IMAGE_NAME) /bin/bash -c "make clean && make deb"
 
