@@ -7,7 +7,7 @@ IMAGE_NAME := pve-kernel-builder
 PWD        := $(shell pwd)
 SRC        := $(PWD)/pve-kernel
 
-.PHONY: help clone build-container build run-container run prep-source prep kernel rebuild-kernel clean clean-all run
+.PHONY: help clone build-container build run-container run prep-source prep kernel rebuild-kernel clean clean-all all-clean
 
 help: ## Show this help message
 	@echo "Usage: make [target]"
@@ -81,12 +81,12 @@ rebuild-kernel: ## Clean and rebuild kernel .deb packages inside the container
 
 clean: ## Run make clean in pve-kernel and remove Docker image (keeps source tree)
 	cd pve-kernel; \
-	-docker rmi $(IMAGE_NAME); \
+	docker rmi $(IMAGE_NAME) >/dev/null 2>&1 || true; \
 	make clean
 
 clean-all: ## Remove Docker image and delete the local pve-kernel source tree
 	cd pve-kernel; \
-	-docker rmi $(IMAGE_NAME); \
-	make clean
+	docker rmi $(IMAGE_NAME) >/dev/null 2>&1 || true
 	rm -rf pve-kernel
 
+all-clean: clean-all
