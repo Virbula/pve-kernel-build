@@ -15,23 +15,29 @@ help:
 	@echo "Targets:"
 	@sed -n 's/^##//p' $(MAKEFILE_LIST) | column -t -s ':' |  sed -e 's/^/ /'
 
-build: build-image
 
-## build-image: Create the Docker container environment with all dependencies
-build-image:
+## clone:  Clone the pve-kernel source code from the proxmox git repo
+clone:
+	git clone git://git.proxmox.com/git/pve-kernel.git
+	cd pve-kernel && git submodule update --init --recursive
+
+## build:  Same as container,  build the docker container used to compile the PVE Kernel
+build: container
+
+## container: Create the Docker container environment with all dependencies
+container:
 	cd pve-kernel; \
 	docker buildx build --platform linux/amd64 -f ../Dockerfile -t $(IMAGE_NAME) .
 
-## run-kernel: Run the compilation process inside the container to produce .deb packages
-run-kernel:
+## run: Run the container used to compile the kernel with bash shell, useful for debugging
+run:
 	docker run --platform linux/amd64 --rm -t -v "$(PWD)/pve-kernel:/src" $(IMAGE_NAME) /bin/bash
 
-## run-debian: Run the stock debian trixie container
-run-debian:
-	docker run --platform linux/amd64 --rm -t debian:trixie /bin/bash
-
-## build-kernel-prep: Run make build-dir-fresh to create build-directory so that we got final packaging control files from the .in templates generated
-build-kernel-prep:
+## prep: Run make build-dir-fresh to create build-directory so that we got final packaging control files from the .in templates generated
+prep:
+	echo 
+	echo "Running make build-dir-fresh to create build directory and get the packaging control files from the .in templates"
+	echo 
 	docker run --platform linux/amd64 --rm -v "$(PWD)/pve-kernel:/src" $(IMAGE_NAME) /bin/bash -c "make clean && make build-dir-fresh"
 
 	@set -e; \
@@ -56,20 +62,21 @@ build-kernel-prep:
 		/bin/bash -lc \
                 "mk-build-deps -ir $$BUILDDIR/debian/control"
 
-## build-kernel: Run the compilation process inside the container to produce .deb packages
-build-kernel:
+## kernel: Run the compilation process inside the container to produce .deb packages
+kernel:
 	docker run --platform linux/amd64 --rm -it \
 		-v "$(SRC):/src" \
 		"$(IMAGE_NAME)" \
 		/bin/bash -lc \
                 "make deb"
 
-## re-build-kernel: Clean up and Run the compilation process inside the container to produce .deb packages
-re-build-kernel:
-	docker run --platform linux/amd64 --rm -v "$(PWD)/pve-kernel:/src" $(IMAGE_NAME) /bin/bash -c "make clean && make"
+## rebuild-kernel: Clean up and Run the compilation process inside the container to produce .deb packages
+rebuild-kernel:
+	docker run --platform linux/amd64 --rm -v "$(PWD)/pve-kernel:/src" $(IMAGE_NAME) /bin/bash -c "make clean && make deb"
 
 ## clean-all: Remove the Docker image and clean the local source tree
 clean-all:
 	cd pve-kernel; \
 	-docker rmi $(IMAGE_NAME); \
+	rm -rf submodules; \
 	make clean
