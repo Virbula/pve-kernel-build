@@ -15,7 +15,7 @@ SRC_MNT      := /src
 
 .PHONY: help build-container build \
         volume-create volume-rm volume-shell volume-init \
-        run-container run \
+        run-container run attach \
         prep-source prep \
         kernel rebuild-kernel \
         export-debs all \
@@ -48,6 +48,9 @@ volume-shell: build-container volume-create ## Open a bash shell with the volume
 
 run-container: volume-shell ## -- Kept for compatibility (debugging)
 run: run-container ## -- Alias for run-container
+
+attach: ## Attempt to attach to the running container
+	docker exec -it $(CONTAINER_NAME)  /bin/bash
 
 volume-init: build-container volume-create ## Clone or update pve-kernel inside the volume (no mac bind mount)
 	docker run --name $(CONTAINER_NAME) --platform linux/amd64 --rm -t \
