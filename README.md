@@ -1,5 +1,5 @@
 # Virbula pve-kernel-build
-Automated PVE Kernel Build With Docker Containers, used by the Virbula team for building and customizing the PVE Kernel for experimentation.
+Automated Proxmox VE(PVE) Kernel Build With Docker Containers, used by the Virbula team for building and customizing the PVE Kernel for experimentation.
 
 Important Note: You need to make sure you docker instance provides enough disk space for the container.  On Docker Desktop, this is a resource limit setting you can set in the Settings configuration section.  Currently you need roughly 80GB of disk space in the container to build the PVE Kernel inside the container. 
 
